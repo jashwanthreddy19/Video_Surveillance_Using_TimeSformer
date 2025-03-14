@@ -38,7 +38,7 @@ num_classes = len(class_durations)
 cols = 3  # Number of columns in the subplot grid
 rows = int(np.ceil(num_classes / cols))  # Calculate rows dynamically
 
-fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))  # Adjust figure size
+fig, axes = plt.subplots(rows, cols, figsize=(10, 3 * rows))  # Adjust figure size
 
 # Flatten the axes array if it's multi-dimensional
 axes = axes.flatten() if num_classes > 1 else [axes]
@@ -47,13 +47,16 @@ axes = axes.flatten() if num_classes > 1 else [axes]
 for i, (class_name, durations) in enumerate(class_durations.items()):
     axes[i].bar(range(len(durations)), durations, color='blue')
     axes[i].set_title(class_name)  # Set subplot title
-    axes[i].set_xlabel("Video Index")
-    axes[i].set_ylabel("Duration (seconds)")
-    
+
 # Hide unused subplots if the number of classes is less than total subplots
 for j in range(i + 1, len(axes)):
     fig.delaxes(axes[j])
 
+# Add super X and Y labels
+fig.supxlabel("Video Index", fontsize=14)  # Global X label
+fig.supylabel("Duration (seconds)", fontsize=14)  # Global Y label
+
 # Adjust layout
 plt.tight_layout()
+plt.savefig(r"scripts\plots\Duration_of_each_video_per_class.png", dpi=600)
 plt.show()
