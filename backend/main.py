@@ -317,8 +317,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 chunk_index = data.get("chunkIndex")
 
                 if chunk_index is None or not isinstance(chunk_index, int) or chunk_index < 0:
-                     print(f"Invalid chunk index received: {chunk_index}")
-                     continue # Ignore invalid messages
+                    print(f"Invalid chunk index received: {chunk_index}")
+                    continue # Ignore invalid messages
 
                 # Construct chunk path using 0-based index
                 chunk_filename = f"chunk_{chunk_index:04d}.avi"
@@ -328,39 +328,67 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if not os.path.exists(chunk_path):
                     print(f"Chunk file does not exist: {chunk_path}")
-                    # Optionally send an error back to frontend
-                    # await websocket.send_json({"error": "Chunk not found", "sourceChunkIndex": chunk_index})
+                    # Send an error back to frontend
+                    await websocket.send_json({
+                        "abnormal": False, # Technically not abnormal, but an error state
+                        "label": f"Error: Chunk {chunk_index} not found on server.",
+                        "clipUrl": None,
+                        "sourceChunkIndex": chunk_index
+                    })
                     continue
 
-                # Process the chunk
-                result = process_chunk(chunk_path,model,class_list)
+                # === REVISED LOGIC START ===
+
+                # 1. Process the chunk using the actual model
+                #    process_chunk now returns the predicted class label string or an error string
+                predicted_label = process_chunk(chunk_path, model, class_list)
+
+                # 2. Determine if the prediction is an abnormal event
+                #    Check against your class_list, excluding "Normal Video" and potential error states
+                is_abnormal = predicted_label in class_list and predicted_label != 'Normal Video'
+                is_error = predicted_label.lower().startswith("error") # Check for error strings returned by process_chunk
+
+                # 3. Initialize the alert data with the actual prediction
                 alert_data = {
-                     "abnormal": False,
-                     "label": "Normal",
-                     "clipUrl": None,
-                     "sourceChunkIndex": chunk_index # Echo back the index
-                 }
+                    "abnormal": is_abnormal, # Set based on the check above
+                    "label": predicted_label, # Use the direct model output/error as the label
+                    "clipUrl": None, # Will be added if abnormal and conversion succeeds
+                    "sourceChunkIndex": chunk_index
+                }
 
-                if result == "abnormal":
-                    print(f"Abnormality detected in chunk {chunk_index}")
+                # 4. If it's an abnormal event, try to convert the chunk and add the clip URL
+                if is_abnormal:
+                    print(f"Abnormal event '{predicted_label}' detected in chunk {chunk_index}. Converting clip...")
                     try:
-                        clip_url = convert_chunk_to_mp4(chunk_path, STATIC_DIR)
-                        alert_data.update({
-                            "abnormal": True,
-                            "label": "Abnormal Event Detected", # Replace with actual model label
-                            "clipUrl": clip_url
-                        })
+                        # Convert the original .avi chunk to an .mp4 clip in the static folder
+                        clip_url_relative = convert_chunk_to_mp4(chunk_path, STATIC_DIR)
+                        alert_data["clipUrl"] = clip_url_relative # Update the dictionary
+                        print(f"Conversion successful. Clip URL: {clip_url_relative}")
                     except Exception as e:
-                         print(f"Failed to convert abnormal chunk {chunk_index} to MP4: {e}")
-                         alert_data["label"] = "Processing Error" # Indicate error instead
+                        # Log the conversion error and inform the frontend
+                        print(f"ERROR: Failed to convert abnormal chunk {chunk_index} ('{predicted_label}') to MP4: {e}")
+                        # Update the label to show the prediction but indicate conversion failure
+                        alert_data["label"] = f"{predicted_label} (Clip Error)"
+                        # Keep abnormal=True, but clipUrl remains None
 
-                elif result == "error":
-                     print(f"Error processing chunk {chunk_index}")
-                     alert_data["label"] = "Processing Error"
+                elif is_error:
+                    # Handle cases where process_chunk returned an error
+                    print(f"Error processing chunk {chunk_index}: {predicted_label}")
+                    # The label already contains the error details from process_chunk
+
+                else:
+                    # Handle the "Normal Video" case (or any other non-abnormal, non-error case)
+                    print(f"Chunk {chunk_index} processed as '{predicted_label}'.")
+                    # alert_data is already correctly set (abnormal=False, label="Normal Video")
 
 
-                # Send result back to frontend
+                # 5. Send the final result back to the frontend
+                print(f"Attempting to send data via WebSocket: {alert_data}")
                 await websocket.send_json(alert_data)
+                print(f"Successfully sent data for chunk {chunk_index}.")
+
+                # === REVISED LOGIC END ===
+
             else:
                 print(f"Received unknown message type: {message_type}")
 
@@ -368,12 +396,15 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket disconnected.")
     except Exception as e:
         print(f"WebSocket Error: {e}")
-        # Ensure connection is closed gracefully if possible
-        # await websocket.close(code=1011) # Internal Server Error code
+        # Optional: try closing gracefully
+        # try:
+        #     await websocket.close(code=1011) # Internal Server Error code
+        # except Exception:
+        #     pass # Ignore errors during close attempt
+
 
 # --- Run Application ---
-
+# (Keep the __main__ block as is)
 if __name__ == "__main__":
     import uvicorn
-    # Consider adding reload=True for development
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000) # Consider reload=True for dev
