@@ -1,0 +1,73 @@
+✅ Validation Loss: 1.4067 | Accuracy: 59.09%
+
+📊 Classification Report (Epoch 0):
+                       precision    recall  f1-score   support
+
+                Abuse       0.68      0.54      0.60        50
+            Explosion       0.81      0.88      0.85        50
+             Fighting       0.63      0.52      0.57        50
+        RoadAccidents       0.67      0.56      0.61        50
+              Robbery       0.52      0.60      0.56        50
+             Shooting       0.00      0.00      0.00         2
+            Vandalism       0.51      0.50      0.51        50
+z_Normal_Videos_event       0.65      0.56      0.60        50
+
+             accuracy                           0.59       352
+            macro avg       0.56      0.52      0.54       352
+         weighted avg       0.63      0.59      0.61       352
+
+
+📦 Epoch [1/5] Summary:
+🔺 Train Loss: 1.7610 | Train Time: 20488.79s
+🔹 Val Loss  : 1.4067 | Accuracy: 59.09%
+⏱ Epoch Time: 29436.63s | Estimated Time Remaining: 81955.16s
+✅ Saved better model at data/trained_models/checkpoints\best_model_epoch1_acc59.09.pth
+
+
+
+
+
+
+
+
+
+
+
+
+Using device: cuda
+Loading pre-trained model from: C:\Users\jashw\Desktop\Video Surveillance\data\trained_models\TimeSformer_divST_96x4_224_K600.pyth
+Model loaded successfully!
+Model modified for partial fine-tuning (only classifier head will be trained).
+c:\Users\jashw\Desktop\Video Surveillance\venv\Lib\site-packages\torch\optim\lr_scheduler.py:62: UserWarning: The verbose parameter is deprecated. Please use get_last_lr() to access the learning rate.
+  warnings.warn(
+In Epoch 0 Processed 1 videos remaining 1599
+In Epoch 0 Processed 2 videos remaining 1598
+
+
+✅ Validation Loss: 0.9685 | Accuracy: 74.15%
+
+📊 Classification Report (Epoch 0):
+                       precision    recall  f1-score   support
+
+                Abuse       0.81      0.76      0.78        50
+            Explosion       0.86      0.88      0.87        50
+             Fighting       0.77      0.66      0.71        50
+        RoadAccidents       0.84      0.64      0.73        50
+              Robbery       0.68      0.86      0.76        50
+             Shooting       0.00      0.00      0.00         2
+            Vandalism       0.76      0.56      0.64        50
+z_Normal_Videos_event       0.80      0.86      0.83        50
+
+             accuracy                           0.74       352
+            macro avg       0.69      0.65      0.67       352
+         weighted avg       0.78      0.74      0.76       352
+
+
+📦 Epoch [1/50] Summary:
+🔺 Train Loss: 1.3889 | Train Time: 1342.62s
+🔹 Val Loss  : 0.9685 | Accuracy: 74.15%
+⏱ Epoch Time: 2088.07s | Estimated Time Remaining: 65788.37s
+✅ Saved better model at data/trained_models/checkpoints\best_model_epoch1_acc74.15.pth
+In Epoch 1 Processed 1 videos remaining 1599
+In Epoch 1 Processed 2 videos remaining 1598
+In Epoch 1 Processed 3 videos remaining 1597
