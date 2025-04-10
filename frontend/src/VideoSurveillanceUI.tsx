@@ -1,296 +1,393 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, DragEvent } from "react";
 
-
-interface AlertData {
+// Interface for data received from backend WebSocket
+interface ChunkStatusData {
   abnormal: boolean;
-  label: string;
-  clipUrl?: string;
-  sourceChunkIndex: number;
+  label: string; // e.g., "Normal Video", "Road Accident", "Error: ..."
+  clipUrl?: string; // URL only if abnormal and conversion succeeded
+  sourceChunkIndex: number; // 0-based index
 }
 
 const VideoSurveillanceUI = () => {
+  // --- State Variables ---
+  const [fileInfo, setFileInfo] = useState<{ name: string; type: string } | null>(null); // Store basic file info
   const [uploading, setUploading] = useState(false);
   const [preprocessing, setPreprocessing] = useState(false);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null); // URL for the display video
-  const [isReadyToPlay, setIsReadyToPlay] = useState(false); // Controls Start button visibility
-  const [isPlaying, setIsPlaying] = useState(false); // Tracks if video is playing
-  const [alerts, setAlerts] = useState<AlertData[]>([]);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null); // Display URL
+  const [isReadyToPlay, setIsReadyToPlay] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  // Store all chunk statuses received, not just abnormal ones for the sidebar
+  const [chunkStatuses, setChunkStatuses] = useState<Record<number, ChunkStatusData>>({});
   const [totalChunks, setTotalChunks] = useState<number>(0);
   const [fps, setFps] = useState<number>(0);
   const [chunkDuration, setChunkDuration] = useState<number>(0);
   const [lastSignaledChunkIndex, setLastSignaledChunkIndex] = useState<number>(-1);
   const [error, setError] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
+  // --- Refs ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const websocketRef = useRef<WebSocket | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null); // Ref for the sidebar
 
-  // Calculate chunk duration once FPS is known
+  // --- Constants ---
+  const FRAMES_PER_CHUNK = 96;
+  const BACKEND_URL = "http://localhost:8000";
+
+  // --- Effects ---
+
+  // Calculate chunk duration
   useEffect(() => {
     if (fps > 0) {
       const duration = FRAMES_PER_CHUNK / fps;
       setChunkDuration(duration);
-      console.log(`Calculated chunk duration: ${duration} seconds for ${FRAMES_PER_CHUNK} frames at ${fps} FPS.`);
+      console.log(`Calculated chunk duration: ${duration.toFixed(3)}s`);
     }
   }, [fps]);
 
-  // Cleanup WebSocket on component unmount
+  // WebSocket cleanup
   useEffect(() => {
     return () => {
       websocketRef.current?.close();
     };
   }, []);
 
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  // --- Core Logic Functions ---
 
-    setError(null); // Clear previous errors
+  // Centralized Upload Handler
+  const uploadAndProcessFile = useCallback(async (selectedFile: File | null) => {
+    if (!selectedFile) {
+      setError("No file selected.");
+      return;
+    }
+    if (!['video/mp4', 'video/avi', 'video/x-msvideo'].includes(selectedFile.type)) {
+      setError("Invalid file type. Please upload MP4 or AVI.");
+      return;
+    }
+
+    // Reset states for new upload
+    setError(null);
+    setFileInfo({ name: selectedFile.name, type: selectedFile.type });
     setUploading(true);
     setPreprocessing(true);
-    setIsReadyToPlay(false); // Hide start button during upload/processing
-    setVideoUrl(null); // Clear previous video
-    setAlerts([]); // Clear previous alerts
+    setIsReadyToPlay(false);
+    setVideoUrl(null);
+    setChunkStatuses({}); // Clear previous statuses
     setLastSignaledChunkIndex(-1);
+    setIsPlaying(false);
+    setFps(0);
+    setChunkDuration(0);
+    setTotalChunks(0);
+    websocketRef.current?.close(); // Close any existing WS connection
 
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", selectedFile);
+    console.log(`Starting upload for: ${selectedFile.name}`);
 
     try {
-      const response = await fetch("http://localhost:8000/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
+      const response = await fetch(`${BACKEND_URL}/api/upload`, { method: "POST", body: formData });
+      setUploading(false); // Upload binary transfer complete
       const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `Upload failed (HTTP ${response.status})`);
 
-      if (!response.ok) {
-        throw new Error(result.error || `HTTP error! status: ${response.status}`);
-      }
-
+      console.log("Backend response:", result);
       if (result.displayUrl && result.totalChunks > 0 && result.fps > 0) {
-        // Prepend server origin if necessary (it's already included by backend mount)
-        const fullDisplayUrl = `http://localhost:8000${result.displayUrl}`;
-        console.log("Received display URL:", fullDisplayUrl);
-        setVideoUrl(fullDisplayUrl);
+        setVideoUrl(`${BACKEND_URL}${result.displayUrl}`);
         setTotalChunks(result.totalChunks);
-        setFps(result.fps); // This triggers the useEffect to calculate chunkDuration
-        setIsReadyToPlay(true); // Show the start button now
-         console.log(`Upload successful. Total Chunks: ${result.totalChunks}, FPS: ${result.fps}`);
+        setFps(result.fps);
+        setIsReadyToPlay(true);
+        console.log(`Preprocessing successful. Chunks: ${result.totalChunks}, FPS: ${result.fps.toFixed(2)}`);
       } else {
-           throw new Error(result.error || "Upload completed but received invalid data from backend.");
+        throw new Error(result.error || "Preprocessing failed: Invalid data received.");
       }
     } catch (err: any) {
       console.error("Upload or processing failed:", err);
-      setError(`Upload failed: ${err.message}`);
-      setIsReadyToPlay(false); // Ensure start button remains hidden on error
-    } finally {
+      setError(`Operation failed: ${err.message}`);
+      setIsReadyToPlay(false);
       setUploading(false);
-      setPreprocessing(false);
+    } finally {
+      setPreprocessing(false); // Preprocessing phase finished
     }
-  };
+  }, []); // Empty dependencies - Function is self-contained
 
- const connectWebSocket = () => {
-    // Close existing connection if any before opening a new one
+  // WebSocket Connect
+  const connectWebSocket = useCallback(() => {
     websocketRef.current?.close();
-
-    const socket = new WebSocket("ws://localhost:8000/ws");
+    const socket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
     websocketRef.current = socket;
 
-    socket.onopen = () => {
-      console.log("WebSocket connected!");
-      // Optionally send initial state or trigger first chunk processing if needed immediately
-      // processCurrentChunk(); // Or let onTimeUpdate handle the first chunk
-    };
-
-    socket.onmessage = (event) => {
-      try {
-          const data: AlertData = JSON.parse(event.data);
-          console.log("WebSocket message received:", data);
-
-           // Only add abnormal alerts to the list for display
-           if (data.abnormal) {
-              // Avoid adding duplicate alerts for the same chunk if backend sends multiple
-               setAlerts((prev) => {
-                   if (!prev.some(a => a.sourceChunkIndex === data.sourceChunkIndex)) {
-                       return [...prev, data];
-                   }
-                   return prev;
-               });
-           } else {
-                // Handle normal/error messages if needed (e.g., update status)
-                console.log(`Chunk ${data.sourceChunkIndex} processed as: ${data.label}`);
-           }
-
-      } catch (error) {
-           console.error("Failed to parse WebSocket message:", error);
-      }
-
-    };
-
+    socket.onopen = () => console.log("WebSocket connected!");
     socket.onerror = (event) => {
-        console.error("WebSocket error:", event);
-         setError("WebSocket connection error.");
+      console.error("WebSocket error:", event);
+      setError("WebSocket connection error. Ensure backend is running.");
+      setIsPlaying(false);
+      if(videoUrl) setIsReadyToPlay(true);
     };
-
-
     socket.onclose = (event) => {
-      console.log("WebSocket connection closed.", event.reason);
-      // Optionally attempt to reconnect or notify user
-      setIsPlaying(false); // Stop state if connection drops
+      console.log("WebSocket connection closed.", event.code, event.reason);
+      if (!event.wasClean && isPlaying) {
+          setError("WebSocket connection lost during processing.");
+          setIsPlaying(false);
+          if(videoUrl) setIsReadyToPlay(true);
+      }
     };
- };
+    socket.onmessage = (event) => {
+       console.log("Raw WebSocket message:", event.data);
+      try {
+          const data: ChunkStatusData = JSON.parse(event.data);
+           console.log("Parsed WebSocket data:", data);
+          // Update the status for this specific chunk index
+          setChunkStatuses(prev => ({
+              ...prev,
+              [data.sourceChunkIndex]: data
+          }));
+      } catch (error) {
+           console.error("Failed to parse WebSocket message:", error, "Raw data:", event.data);
+      }
+    };
+  }, [videoUrl, isPlaying]); // Added isPlaying dependency for onclose logic
 
-
-  const handleStart = () => {
-    if (!videoRef.current || !videoUrl) return;
-
-    setIsReadyToPlay(false); // Hide start button once started
-    setIsPlaying(true);
-    videoRef.current.controls = true; // Show native controls once playing
-    videoRef.current.play().catch(err => {
-        console.error("Video play failed:", err);
-        setError(`Could not play video: ${err.message}`);
-        setIsPlaying(false); // Reset state if play fails
-        setIsReadyToPlay(true); // Show start button again
-    });
-    connectWebSocket();
-  };
-
+  // Send Chunk Request
   const sendProcessChunkRequest = useCallback((chunkIndex: number) => {
-    if (websocketRef.current?.readyState === WebSocket.OPEN) {
-       console.log(`Signaling backend to process chunk index: ${chunkIndex}`);
-       websocketRef.current.send(JSON.stringify({ type: "processChunk", chunkIndex: chunkIndex }));
-       setLastSignaledChunkIndex(chunkIndex);
+    const ws = websocketRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      // console.log(`Signaling backend for chunk index: ${chunkIndex}`);
+      ws.send(JSON.stringify({ type: "processChunk", chunkIndex }));
+      setLastSignaledChunkIndex(chunkIndex);
     } else {
-       console.warn("WebSocket not open. Cannot send chunk request.");
-       // Optional: Attempt reconnect or queue request
+      const state = ws?.readyState;
+      if (state === WebSocket.CONNECTING) {
+        console.warn("WebSocket is still connecting. Chunk request deferred.");
+      } else {
+        console.error(`WebSocket not open (state: ${state}). Cannot send chunk request.`);
+        setError("WebSocket disconnected. Cannot send processing request.");
+        setIsPlaying(false);
+         if(videoUrl) setIsReadyToPlay(true);
+      }
     }
- }, []); // No dependencies needed if it only uses refs and state setters
+  }, [videoUrl]); // Include videoUrl dependency
 
+  // Process Current Chunk based on video time
+  const processCurrentChunk = useCallback((fromSeek = false) => {
+    if (!videoRef.current || chunkDuration <= 0) return;
+    if (!isPlaying && !fromSeek) return;
 
- const processCurrentChunk = useCallback(() => {
-    if (!videoRef.current || chunkDuration <= 0 || !isPlaying) {
-      return; // Don't process if video not ready/playing or duration unknown
-    }
-
-    const currentTime = videoRef.current.currentTime;
-    // Ensure index calculation is safe for t=0 and doesn't exceed total chunks
+    const video = videoRef.current;
+    const currentTime = video.currentTime;
     const currentChunkIndex = Math.max(0, Math.min(totalChunks - 1, Math.floor(currentTime / chunkDuration)));
 
-    // Send only if the index has changed and is valid
+    // console.log(`[${fromSeek ? 'Seek' : 'TimeUpdate'}] time: ${currentTime.toFixed(2)}, chunkIdx: ${currentChunkIndex}, lastSignaled: ${lastSignaledChunkIndex}`);
+
     if (currentChunkIndex >= 0 && currentChunkIndex < totalChunks && currentChunkIndex !== lastSignaledChunkIndex) {
-        sendProcessChunkRequest(currentChunkIndex);
+      sendProcessChunkRequest(currentChunkIndex);
     }
-  }, [chunkDuration, isPlaying, lastSignaledChunkIndex, totalChunks, sendProcessChunkRequest]); // Add sendProcessChunkRequest
+  }, [chunkDuration, isPlaying, lastSignaledChunkIndex, totalChunks, sendProcessChunkRequest]);
+
+  // Start Button Handler
+  const handleStart = () => {
+    if (!videoRef.current || !videoUrl) return;
+    setError(null);
+    setIsReadyToPlay(false);
+    connectWebSocket(); // Connect WebSocket
+    videoRef.current.play() // Attempt to play
+        .then(() => {
+            setIsPlaying(true);
+            videoRef.current!.controls = true;
+            // Let connectWebSocket's onopen trigger the first chunk check
+        })
+        .catch(err => {
+            console.error("Video play failed:", err);
+            setError(`Could not play video: ${err.message}.`);
+            setIsPlaying(false);
+            setIsReadyToPlay(true);
+            websocketRef.current?.close();
+        });
+  };
+
+   // Seek Handler
+   const handleSeeked = useCallback(() => {
+      if (!videoRef.current) return;
+      console.log(`Seeked to: ${videoRef.current.currentTime.toFixed(2)}`);
+      // Reset last signaled index to force send for the new position
+      setLastSignaledChunkIndex(-1);
+      processCurrentChunk(true); // Trigger check after seek
+   }, [processCurrentChunk]);
+
+  // --- Drag and Drop Handlers ---
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault(); event.stopPropagation(); setIsDraggingOver(true);
+  }, []);
+  const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault(); event.stopPropagation(); setIsDraggingOver(true);
+  }, []);
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault(); event.stopPropagation();
+    const relatedTarget = event.relatedTarget as Node;
+     if (!event.currentTarget.contains(relatedTarget)) setIsDraggingOver(false);
+  }, []);
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault(); event.stopPropagation(); setIsDraggingOver(false);
+    if (uploading || preprocessing) return;
+    const files = event.dataTransfer.files;
+    if (files && files.length > 0) {
+      uploadAndProcessFile(files[0]);
+      if (event.dataTransfer.items) event.dataTransfer.items.clear();
+      else event.dataTransfer.clearData();
+    }
+  }, [uploadAndProcessFile, uploading, preprocessing]);
+  const triggerFileInput = () => {
+    if (uploading || preprocessing) return;
+    fileInputRef.current?.click();
+  };
 
 
-  // UseEffect for interval-based check as ontimeupdate can be inconsistent
-//   useEffect(() => {
-//      let intervalId: NodeJS.Timeout | null = null;
-//      if (isPlaying) {
-//          // Check more frequently than chunk duration to catch changes promptly
-//          intervalId = setInterval(processCurrentChunk, 500); // Check every 500ms
-//      } else {
-//          if (intervalId) clearInterval(intervalId);
-//      }
-//      return () => {
-//          if (intervalId) clearInterval(intervalId);
-//      };
-//   }, [isPlaying, processCurrentChunk]);
-
-  // --- Constants ---
-  const FRAMES_PER_CHUNK = 96; // Keep consistent with backend if needed
-
-
+  // --- JSX Rendering ---
   return (
-    <div className="p-4 border rounded-lg w-full max-w-2xl mx-auto bg-white shadow-lg">
-      <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Intelligent Video Surveillance</h2>
+    <div className="w-full max-w-7xl mx-auto bg-white rounded-xl shadow-2xl overflow-hidden my-8 border border-gray-200">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-slate-700 to-slate-900 p-5">
+        <h2 className="text-2xl sm:text-3xl font-bold text-white text-center tracking-tight">
+          Intelligent Video Surveillance
+        </h2>
+      </div>
 
-      {error && (
-          <div className="my-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded text-center">
-              <strong>Error:</strong> {error}
-          </div>
-      )}
+      <div className="flex flex-col lg:flex-row"> {/* Main Content Area */}
 
-      {!videoUrl && !uploading && (
-        <div className="text-center">
-            <label htmlFor="video-upload" className="cursor-pointer bg-indigo-600 text-white py-2 px-5 rounded-md hover:bg-indigo-700 transition font-medium">
-                Upload Video (.mp4 or .avi)
-            </label>
-          <input
-            id="video-upload"
-            type="file"
-            accept=".mp4,.avi"
-            onChange={handleUpload}
-            className="hidden" // Hide default input, use label styling
-            disabled={uploading || preprocessing}
-          />
-        </div>
-      )}
+        {/* --- Left Column (Main Interaction Area) --- */}
+        <div className="flex-grow lg:w-2/3 p-6 sm:p-8 border-b lg:border-b-0 lg:border-r border-gray-200">
+          {/* Error Display */}
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-300 text-red-800 rounded-lg text-center shadow-sm">
+              <span className="font-semibold">Error:</span> {error}
+            </div>
+          )}
 
-       {(uploading || preprocessing) && (
-         <div className="text-center my-4 text-gray-600">
-             <p>{uploading && !preprocessing ? "Uploading..." : "Preprocessing video (converting/chunking)... Please wait."}</p>
-             {/* Optional: Add a spinner */}
-         </div>
-       )}
-
-
-      {videoUrl && (
-        <div className="mb-4">
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            className="w-full rounded-md bg-black" // Added bg-black for letterboxing
-            controls={isPlaying} // Show controls only when playing has started
-            onTimeUpdate={processCurrentChunk} // Trigger processing check on time update
-            onSeeked={processCurrentChunk} // Trigger processing check immediately after seek
-            // Consider adding onPlay, onPause to manage isPlaying state more accurately
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => {setIsPlaying(false); websocketRef.current?.close();}} // Close WS on end
-          />
-        </div>
-      )}
-
-      {isReadyToPlay && !isPlaying && (
-        <button
-          onClick={handleStart}
-          disabled={!videoUrl} // Should always be true if button is visible
-          className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition disabled:opacity-50"
-        >
-          Start Analysis
-        </button>
-      )}
-
-      {alerts.length > 0 && (
-        <div className="mt-6 pt-4 border-t">
-          <h3 className="text-lg font-semibold mb-3 text-gray-700">Detected Abnormal Events:</h3>
-          <div className="space-y-3 max-h-60 overflow-y-auto pr-2"> {/* Scrollable alerts */}
-            {alerts.map((alert, idx) => (
-              <div key={idx} className="bg-red-100 p-3 rounded-md border border-red-300 text-sm shadow-sm">
-                <p className="font-semibold text-red-800">
-                  Chunk {alert.sourceChunkIndex}: {alert.label}
-                </p>
-                {alert.clipUrl && (
-                  <div className="mt-2">
-                    <video
-                     // Prepend origin for static files as well
-                      src={`http://localhost:8000${alert.clipUrl}`}
-                      className="w-full rounded"
-                      controls
-                      autoPlay={false} // Don't autoplay alert clips by default maybe?
-                      loop={false}
-                    />
-                  </div>
-                )}
+          {/* 1. Upload Stage */}
+          {!videoUrl && !preprocessing && (
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 sm:p-16 text-center transition-colors duration-200 ease-in-out cursor-pointer min-h-[300px] flex flex-col justify-center items-center ${isDraggingOver ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-gray-400 bg-gray-50'} ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop}
+              onClick={triggerFileInput} role="button" tabIndex={0} aria-label="Video upload drop zone"
+            >
+              <input ref={fileInputRef} id="video-upload" type="file" accept=".mp4,.avi,video/mp4,video/avi,video/x-msvideo" onChange={(e) => uploadAndProcessFile(e.target.files ? e.target.files[0] : null)} className="hidden" disabled={uploading || preprocessing} />
+              <div className="space-y-3 text-gray-600">
+                 <svg className={`w-16 h-16 mx-auto ${isDraggingOver ? 'text-indigo-600' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                <p className="text-lg font-medium">{isDraggingOver ? "Drop video file here!" : "Drag & drop video file or click"}</p>
+                <p className="text-sm text-gray-500">MP4 or AVI formats supported</p>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+              {uploading && <p className="mt-4 text-blue-600 font-medium">Uploading...</p>}
+            </div>
+          )}
+
+          {/* 2. Preprocessing Stage */}
+          {preprocessing && (
+            <div className="text-center py-16 text-gray-700 space-y-4 min-h-[300px] flex flex-col justify-center items-center">
+               <svg className="animate-spin h-10 w-10 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <p className="text-xl font-semibold">Preprocessing Video...</p>
+              <p className="text-base text-gray-500">Converting & splitting chunks. Please wait.</p>
+            </div>
+          )}
+
+          {/* 3. Ready/Playing Stage */}
+          {videoUrl && !preprocessing && (
+            <div className="space-y-5">
+              {/* Video Player */}
+              <div>
+                <h3 className="text-xl font-semibold mb-3 text-gray-800 capitalize">
+                  {fileInfo?.name || 'Video Analysis'}
+                </h3>
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  className="w-full rounded-lg bg-black shadow-md aspect-video"
+                  controls={isPlaying} // Only show controls once playing started
+                  onTimeUpdate={() => processCurrentChunk(false)}
+                  onSeeked={handleSeeked} // Use specific handler
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onEnded={() => { setIsPlaying(false); websocketRef.current?.close(); }}
+                  onError={(e) => { console.error("Main video playback error:", e); setError("Video playback error."); }}
+                  preload="auto" // Help ensure video metadata is loaded
+                />
+              </div>
+
+              {/* Start Button */}
+              {isReadyToPlay && !isPlaying && (
+                <div className="text-center">
+                    <button
+                        onClick={handleStart}
+                        className="w-full sm:w-auto inline-flex justify-center items-center px-8 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out disabled:opacity-50"
+                        disabled={!videoUrl || uploading || preprocessing}
+                    >
+                        <svg className="-ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                        Start Analysis
+                    </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div> {/* End Left Column */}
+
+
+        {/* --- Right Column (Sidebar / Events Panel) --- */}
+        <aside ref={sidebarRef} className="lg:w-1/3 p-6 bg-slate-50 border-l border-gray-200 max-h-[calc(100vh-150px)] lg:max-h-none overflow-y-auto custom-scrollbar">
+           <h3 className="text-xl font-semibold mb-4 text-slate-700 border-b border-slate-300 pb-3 sticky top-0 bg-slate-50 z-10">
+             Analysis Log
+           </h3>
+           <div className="space-y-3">
+             {totalChunks > 0 ? (
+                // Display status for each chunk as it comes in, with newest at the top
+                 Object.values(chunkStatuses) // Get array of status objects
+                   .sort((a, b) => b.sourceChunkIndex - a.sourceChunkIndex) // Sort in reverse order (newest first)
+                   .map((status) => (
+                     <div
+                        key={status.sourceChunkIndex}
+                        className={`border rounded-md p-3 shadow-sm transition hover:shadow ${
+                          status.abnormal
+                             ? 'bg-red-50 border-red-200'
+                             : status.label.startsWith("Error:")
+                             ? 'bg-yellow-50 border-yellow-200'
+                             : 'bg-white border-gray-200'
+                        }`}
+                      >
+                         <p className={`text-sm font-medium flex justify-between items-center ${
+                              status.abnormal ? 'text-red-700' : status.label.startsWith("Error:") ? 'text-yellow-700' : 'text-gray-700'
+                            }`}>
+                             <span>Chunk {status.sourceChunkIndex + 1}</span> {/* Display 1-based */}
+                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                status.abnormal ? 'bg-red-200 text-red-800' : status.label.startsWith("Error:") ? 'bg-yellow-200 text-yellow-800' : 'bg-green-100 text-green-800'
+                             }`}>
+                               {status.label}
+                             </span>
+                         </p>
+                         {/* Only show video player here if abnormal and clip exists */}
+                         {status.abnormal && status.clipUrl && (
+                            <div className="mt-2 pt-2 border-t border-red-200">
+                             <video
+                                src={`${BACKEND_URL}${status.clipUrl}`}
+                                className="w-full rounded border border-red-200"
+                                controls
+                                preload="metadata" // Load only metadata initially
+                                onError={(e) => console.error('Error loading alert clip:', status.clipUrl, e)}
+                             />
+                           </div>
+                         )}
+                     </div>
+                   ))
+             ) : (
+                 <p className="text-sm text-gray-500 italic text-center py-10">
+                   {videoUrl ? 'Analysis not started yet.' : 'Upload a video to begin.'}
+                 </p>
+             )}
+              {/* Add a placeholder at the bottom to ensure scroll works */}
+             <div className="h-1"></div>
+           </div>
+        </aside> {/* End Right Column */}
+
+      </div> {/* End Main Content Area flex */}
+    </div> // End Outer container
   );
 };
 
