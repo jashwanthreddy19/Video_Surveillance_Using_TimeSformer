@@ -3,10 +3,12 @@
 ## Overview
 Video Surveillance Using TimeSformer is a project designed to detect abnormal events (such as fighting, assault, theft, etc.) in real-time from multiple CCTV feeds. The system utilizes a fine-tuned Timesformer model for video classification, processes video streams into fixed-length clips, and sends alerts when an anomaly is detected.
 
+https://github.com/user-attachments/assets/e3d93d34-156c-4f95-a390-b2da24055b74
+
 ## Features
 - **Real-Time Video Ingestion:** Accepts multiple video streams using protocols like RTSP.
 - **Video Preprocessing:** Extracts frames, resizes/crops them to 224×224, and generates fixed-length clips.
-- **Abnormal Event Detection:** Uses a fine-tuned Timesformer model to classify events.
+- **Abnormal Event Detection:** Uses a fine-tuned TimeSformer model to classify events.
 - **Alert System:** Sends notifications via email/SMS/push when an abnormal event is detected.
 - **Web Dashboard:** Provides a user-friendly interface for monitoring video feeds, viewing event logs, and system status.
 
@@ -20,17 +22,36 @@ Video Surveillance Using TimeSformer/
 │   │   └── [Your Datasets Here]
 │   └── sample_videos/
 │       └── [Sample Videos Here]
+├── models/
+│   ├── TimeSformer/
+│   │   └── # GitHub Repo https://github.com/facebookresearch/TimeSformer 
+│   └── # Trying different models and training files
+├── datasets/
+│   ├── # files to create the custom datapipeline for training the model.
 ├── src/
-│   ├── video_processing.py      # Module for video ingestion and preprocessing
-│   ├── model_inference.py     # Module for loading and running the Timesformer model
-│   ├── app.py                 # Web application (Flask or FastAPI) for serving video feeds and alerts
-│   └── [Other Source Files]
+│   ├── create_32_frame_clips.py      
+│   ├── create_96_frame_clips.py     
+│   ├── test_opencv.py             
+│   └── .gitkeep
+├── frontend/
+│   ├── # files related to frontend of the project.
+├── backend/
+│   ├── # files related to backend of the project.
+├── utils/
+│   ├──split_data.py
+│   └── .gitkeep
 ├── tests/
-│   ├── unit/
-│   │   └── [Unit Tests Here]
-│   ├── integration/
-│   │   └── [Integration Tests Here]
-│   └── [Other Test Files]
+│   ├── runs/
+│   │   └── my_experiments/
+│   │       └──#Tensorboard files
+│   ├── test_gpu.py
+│   └── model_testing.ipynb
+├── scripts/
+│   ├── plots/
+│   │   └── #plots of the data and model training information
+│   ├── count_videos_per_class.py
+│   ├── download_ucf_dataset.py
+│   └── visualize_video_durations.py
 ├── README.md                  # Project overview and documentation
 └── requirements.txt             # List of project dependencies
 ```
@@ -68,19 +89,23 @@ python src/video_processing.py
 ```
 Model Inference:
 
-Run the model inference module on the preprocessed clips:
+download the pretrained model.
 
-```bash
-
-python src/model_inference.py
-```
 Web Application:
 
 Start the web server to access the dashboard and view alerts:
 
 ```bash
 
-python src/app.py
+cd frontend
+npm run dev
+```
+Also don't forget to run the backend:
+
+```bash
+
+cd backend
+python main.py
 ```
 
 Next Steps
